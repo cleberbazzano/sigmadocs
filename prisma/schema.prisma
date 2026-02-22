@@ -1,0 +1,952 @@
+// Sigma DOCs - Sistema de Gestão Eletrônica de Documentos
+// Schema completo com segurança, assinatura digital e organização por IA
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== EMPRESA ====================
+
+model Company {
+  id                String   @id @default(cuid())
+  
+  // Dados básicos
+  razaoSocial       String
+  nomeFantasia      String?
+  cnpj              String   @unique
+  inscricaoEstadual String?
+  inscricaoMunicipal String?
+  
+  // Representante
+  representanteNome     String
+  representanteCpf      String?
+  representanteCargo    String?
+  representanteTelefone String?
+  representanteCelular  String?
+  representanteEmail    String?
+  
+  // Contato
+  telefoneComercial String?
+  email             String
+  site              String?
+  
+  // Endereço
+  cep         String?
+  logradouro  String?
+  numero      String?
+  complemento String?
+  bairro      String?
+  cidadeId    String?
+  cidade      Cidade?   @relation(fields: [cidadeId], references: [id])
+  uf          String?   // Sigla da UF
+  
+  // Logo
+  logo        String?   // Caminho do arquivo da logo
+  logoWidth   Int?
+  logoHeight  Int?
+  
+  // Configurações
+  ativo       Boolean   @default(true)
+  
+  // Timestamps
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  
+  @@map("companies")
+}
+
+// ==================== ESTADOS E CIDADES DO BRASIL ====================
+
+model Estado {
+  id        String    @id @default(cuid())
+  sigla     String    @unique
+  nome      String
+  cidades   Cidade[]
+  
+  @@map("estados")
+}
+
+model Cidade {
+  id        String   @id @default(cuid())
+  nome      String
+  uf        String   // Sigla do estado
+  estado    Estado   @relation(fields: [uf], references: [sigla])
+  ibge      String?  // Código IBGE
+  
+  companies Company[]
+  
+  @@index([uf])
+  @@map("cidades")
+}
+
+// ==================== USUÁRIOS E PERMISSÕES ====================
+
+enum UserRole {
+  ADMIN       // Acesso total ao sistema
+  MANAGER     // Gerenciamento de documentos e usuários do departamento
+  USER        // Acesso a documentos do próprio departamento
+  VIEWER      // Apenas visualização
+}
+
+model User {
+  id            String         @id @default(cuid())
+  email         String         @unique
+  name          String
+  passwordHash  String
+  role          UserRole       @default(USER)
+  department    String?
+  active        Boolean        @default(true)
+  avatar        String?
+  phone         String?
+  
+  // Timestamps
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  lastLoginAt   DateTime?
+  
+  // Relacionamentos
+  documents     Document[]
+  signatures    Signature[]
+  auditLogs     AuditLog[]
+  notifications Notification[]
+  sessions      Session[]
+  alertNotifications DocumentAlertNotification[]
+  apiKeys       ApiKey[]
+  comments      DocumentComment[]
+  
+  @@map("users")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token        String   @unique
+  ipAddress    String?
+  userAgent    String?
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+  
+  @@map("sessions")
+}
+
+// ==================== CATEGORIAS E TIPOS ====================
+
+model DocumentCategory {
+  id            String     @id @default(cuid())
+  name          String
+  description   String?
+  icon          String?
+  color         String?
+  parentId      String?
+  parent        DocumentCategory?  @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children      DocumentCategory[] @relation("CategoryHierarchy")
+  documents     Document[]
+  level         Int        @default(1)
+  order         Int        @default(0)
+  active        Boolean    @default(true)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  
+  @@map("document_categories")
+}
+
+model DocumentType {
+  id             String     @id @default(cuid())
+  name           String
+  description    String?
+  icon           String?
+  retentionDays  Int        @default(2555) // 7 anos padrão
+  requiresSign   Boolean    @default(false)
+  confidentiality String    @default("normal") // normal, restrito, confidencial
+  template       String?    // JSON com campos padrão
+  documents      Document[]
+  active         Boolean    @default(true)
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+  
+  @@map("document_types")
+}
+
+// ==================== DOCUMENTOS ====================
+
+enum DocumentStatus {
+  DRAFT        // Rascunho
+  PENDING      // Aguardando aprovação/assinatura
+  SIGNED       // Assinado digitalmente
+  APPROVED     // Aprovado
+  ARCHIVED     // Arquivado
+  EXPIRED      // Expirado
+  CANCELLED    // Cancelado
+}
+
+enum ConfidentialityLevel {
+  PUBLIC       // Acesso público
+  INTERNAL     // Acesso interno
+  RESTRICTED   // Acesso restrito
+  CONFIDENTIAL // Confidencial
+  SECRET       // Secreto
+}
+
+enum DocumentSource {
+  UPLOAD       // Upload manual
+  SCAN         // Digitalização via scanner
+  EMAIL        // Recebido por email
+  IMPORT       // Importado de outro sistema
+}
+
+model Document {
+  id                String              @id @default(cuid())
+  title             String
+  description       String?
+  content           String?             // Texto extraído para busca
+  
+  // Arquivo
+  fileName          String
+  filePath          String
+  fileSize          Int
+  mimeType          String
+  fileHash          String              // Hash SHA-256 para integridade
+  
+  // Origem
+  source            DocumentSource      @default(UPLOAD)
+  scannerId         String?             // ID do scanner usado
+  scannedAt         DateTime?           // Data da digitalização
+  signedOnScan      Boolean             @default(false) // Se foi assinado durante digitalização
+  
+  // Metadados
+  documentNumber    String?             // Número do documento
+  documentDate      DateTime?           // Data do documento
+  expirationDate    DateTime?           // Data de validade
+  keywords          String?             // Tags separadas por vírgula
+  metadata          String?             // JSON com metadados adicionais
+  
+  // Classificação
+  status            DocumentStatus      @default(DRAFT)
+  confidentiality   ConfidentialityLevel @default(INTERNAL)
+  
+  // Organização
+  categoryId        String?
+  category          DocumentCategory?   @relation(fields: [categoryId], references: [id])
+  typeId            String?
+  type              DocumentType?       @relation(fields: [typeId], references: [id])
+  
+  // IA - Indexação e Organização
+  aiSummary         String?             // Resumo gerado por IA
+  aiKeywords        String?             // Keywords extraídas por IA
+  aiCategory        String?             // Categoria sugerida por IA
+  aiProcessed       Boolean             @default(false)
+  aiEmbedding       String?             // Embedding vetorial para busca semântica
+  
+  // Proprietário e controle
+  authorId          String
+  author            User                @relation(fields: [authorId], references: [id])
+  department        String?
+  version           Int                 @default(1)
+  parentDocumentId  String?             // Para versionamento
+  parentDocument    Document?           @relation("DocumentVersion", fields: [parentDocumentId], references: [id])
+  childDocuments    Document[]          @relation("DocumentVersion")
+  
+  // Assinaturas e aprovações
+  signatures        Signature[]
+  approvals         DocumentApproval[]
+  
+  // Compartilhamento
+  sharedWith        DocumentShare[]
+  
+  // Auditoria
+  auditLogs         AuditLog[]
+  
+  // Alertas de vencimento
+  alerts            DocumentAlert[]
+  
+  // Colaboração
+  lock              DocumentLock?
+  interactions      DocumentInteraction[]
+  
+  // Comentários
+  comments          DocumentComment[]
+  
+  // Workflow de aprovação
+  approvalWorkflows ApprovalWorkflow[]
+  
+  // Timestamps
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  signedAt          DateTime?
+  archivedAt        DateTime?
+  
+  @@index([title])
+  @@index([documentNumber])
+  @@index([status])
+  @@index([authorId])
+  @@index([categoryId])
+  @@index([source])
+  @@map("documents")
+}
+
+// ==================== SCANNERS ====================
+
+model Scanner {
+  id            String    @id @default(cuid())
+  name          String
+  manufacturer  String?
+  model         String?
+  driver        String?   // Caminho do driver
+  ipAddress     String?   // IP do scanner na rede
+  port          Int?
+  isNetwork     Boolean   @default(false)
+  isDefault     Boolean   @default(false)
+  isActive      Boolean   @default(true)
+  config        String?   // JSON com configurações
+  lastUsedAt    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  @@map("scanners")
+}
+
+// ==================== ASSINATURA DIGITAL ====================
+
+model Signature {
+  id              String    @id @default(cuid())
+  documentId      String
+  document        Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  
+  // Informações do signatário
+  userId          String
+  user            User      @relation(fields: [userId], references: [id])
+  
+  // Certificado Digital A1
+  certificatePem  String?   // Certificado em formato PEM
+  certificateCn   String?   // Common Name do certificado
+  certificateOu   String?   // Organization Unit
+  certificateO    String?   // Organization
+  certificateCpf  String?   // CPF do certificado
+  certificateValidFrom   DateTime?
+  certificateValidTo     DateTime?
+  
+  // Assinatura
+  signatureValue  String    // Valor da assinatura digital
+  signatureAlgorithm String @default("RSA-SHA256")
+  signatureDate   DateTime  @default(now())
+  ipAddress       String?
+  userAgent       String?
+  location        String?
+  
+  // Validade
+  valid           Boolean   @default(true)
+  revokedAt       DateTime?
+  revokeReason    String?
+  
+  @@map("signatures")
+}
+
+// ==================== APROVAÇÕES ====================
+
+model DocumentApproval {
+  id          String    @id @default(cuid())
+  documentId  String
+  document    Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  
+  approverId  String
+  approvedAt  DateTime  @default(now())
+  comments    String?
+  status      String    @default("approved") // approved, rejected
+  
+  @@map("document_approvals")
+}
+
+// ==================== COMPARTILHAMENTO ====================
+
+model DocumentShare {
+  id          String    @id @default(cuid())
+  documentId  String
+  document    Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  
+  sharedWithUserId  String?
+  sharedWithEmail   String?
+  sharedWithDepartment String?
+  
+  permission  String    @default("view") // view, edit, sign, full
+  expiresAt   DateTime?
+  sharedBy    String
+  createdAt   DateTime  @default(now())
+  
+  @@map("document_shares")
+}
+
+// ==================== AUDITORIA E LOGS ====================
+
+enum AuditAction {
+  CREATE
+  READ
+  UPDATE
+  DELETE
+  SIGN
+  APPROVE
+  REJECT
+  SHARE
+  DOWNLOAD
+  EXPORT
+  EMAIL
+  ARCHIVE
+  RESTORE
+  LOGIN
+  LOGOUT
+  LOGIN_FAILED
+  SCAN
+  REPORT
+}
+
+model AuditLog {
+  id          String      @id @default(cuid())
+  userId      String?
+  user        User?       @relation(fields: [userId], references: [id])
+  
+  action      AuditAction
+  entityType  String      // Document, User, Category, etc.
+  entityId    String?
+  
+  documentId  String?
+  document    Document?   @relation(fields: [documentId], references: [id])
+  
+  details     String?     // JSON com detalhes da ação
+  ipAddress   String?
+  userAgent   String?
+  
+  createdAt   DateTime    @default(now())
+  
+  @@index([userId])
+  @@index([action])
+  @@index([entityType])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ==================== NOTIFICAÇÕES ====================
+
+model Notification {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  title       String
+  message     String
+  type        String    @default("info") // info, warning, success, error
+  link        String?
+  read        Boolean   @default(false)
+  
+  // Metadados para rastreamento
+  metadata    String?   // JSON com dados adicionais (documentId, expirationDate, etc.)
+  alertId     String?   // Referência ao alerta de vencimento (se aplicável)
+  
+  createdAt   DateTime  @default(now())
+  readAt      DateTime?
+  
+  @@index([userId])
+  @@index([read])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+// ==================== ALERTAS DE VENCIMENTO ====================
+
+model DocumentAlert {
+  id              String    @id @default(cuid())
+  documentId      String
+  document        Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  
+  // Configuração do alerta
+  alertDays       Int       @default(30)    // Dias de antecedência
+  alertDate       DateTime                   // Data programada para o alerta
+  
+  // Status
+  status          String    @default("pending") // pending, sent, acknowledged, escalated
+  level           Int       @default(1)        // Nível de escalonamento (1 = usuário, 2 = gerente, 3 = admin)
+  
+  // Rastreamento
+  sentAt          DateTime?                    // Quando o alerta foi enviado
+  acknowledgedAt  DateTime?                    // Quando o usuário marcou como lido
+  acknowledgedBy  String?                      // ID do usuário que marcou como lido
+  escalatedAt     DateTime?                    // Quando foi escalado
+  escalatedTo     String?                      // ID do usuário para quem foi escalado
+  
+  // Notificações
+  notifications   DocumentAlertNotification[]
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  @@index([documentId])
+  @@index([status])
+  @@index([alertDate])
+  @@index([level])
+  @@map("document_alerts")
+}
+
+model DocumentAlertNotification {
+  id              String        @id @default(cuid())
+  alertId         String
+  alert           DocumentAlert @relation(fields: [alertId], references: [id], onDelete: Cascade)
+  
+  userId          String        // ID do usuário notificado
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sentAt          DateTime      @default(now())  // Quando a notificação foi enviada
+  readAt          DateTime?                      // Quando foi lida
+  emailSent       Boolean       @default(false)  // Se email foi enviado
+  emailSentAt     DateTime?                      // Quando o email foi enviado
+  
+  @@index([alertId])
+  @@index([userId])
+  @@map("document_alert_notifications")
+}
+
+// ==================== LOGS DE EMAIL ====================
+
+model EmailLog {
+  id          String    @id @default(cuid())
+  to          String                        // Destinatário(s)
+  subject     String                        // Assunto
+  status      String                        // sent, failed, logged_only
+  messageId   String?                       // ID da mensagem (do provedor)
+  error       String?                       // Mensagem de erro (se houver)
+  sentAt      DateTime  @default(now())
+  
+  @@index([to])
+  @@index([status])
+  @@index([sentAt])
+  @@map("email_logs")
+}
+
+// ==================== CONFIGURAÇÕES DE ALERTA ====================
+
+model AlertConfiguration {
+  id                    String    @id @default(cuid())
+  
+  // Configurações de antecedência
+  firstAlertDays        Int       @default(30)   // Primeiro alerta (dias antes)
+  secondAlertDays       Int       @default(15)   // Segundo alerta
+  thirdAlertDays        Int       @default(7)    // Terceiro alerta
+  finalAlertDays        Int       @default(1)    // Alerta final
+  
+  // Escalonamento
+  escalationEnabled    Boolean   @default(true)
+  escalationDays       Int       @default(3)     // Dias após vencimento para escalar
+  maxEscalationLevel   Int       @default(3)     // Níveis de escalonamento (1=usuario, 2=gerente, 3=admin)
+  
+  // Email
+  emailEnabled         Boolean   @default(true)
+  emailTemplate        String?                    // Template customizado
+  
+  // Timestamps
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+  
+  @@map("alert_configurations")
+}
+
+// ==================== CONFIGURAÇÕES DO SISTEMA ====================
+
+model SystemConfig {
+  id          String    @id @default(cuid())
+  key         String    @unique
+  value       String    // JSON
+  description String?
+  updatedAt   DateTime  @updatedAt
+  updatedBy   String?
+  
+  @@map("system_config")
+}
+
+// ==================== TEMPLATES DE DOCUMENTOS ====================
+
+model DocumentTemplate {
+  id          String    @id @default(cuid())
+  name        String
+  description String?
+  content     String    // HTML ou Markdown
+  fields      String    // JSON com definição dos campos
+  categoryId  String?
+  typeId      String?
+  active      Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  
+  @@map("document_templates")
+}
+
+// ==================== RELATÓRIOS ====================
+
+model ReportTemplate {
+  id          String    @id @default(cuid())
+  name        String
+  description String?
+  module      String    // documents, users, audit, signatures, etc.
+  query       String    // JSON com definição da consulta
+  columns     String    // JSON com colunas do relatório
+  filters     String?   // JSON com filtros disponíveis
+  groupBy     String?   // JSON com agrupamentos
+  orderBy     String?   // JSON com ordenação
+  headerTemplate String? // HTML para cabeçalho customizado
+  footerTemplate String? // HTML para rodapé customizado
+  active      Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  
+  generatedReports GeneratedReport[]
+  
+  @@map("report_templates")
+}
+
+model GeneratedReport {
+  id            String    @id @default(cuid())
+  templateId    String?
+  template      ReportTemplate? @relation(fields: [templateId], references: [id])
+  name          String
+  module        String
+  filters       String?   // JSON com filtros aplicados
+  format        String    @default("pdf") // pdf, html, csv, xlsx
+  filePath      String?   // Caminho do arquivo gerado
+  generatedBy   String
+  generatedAt   DateTime  @default(now())
+  expiresAt     DateTime?
+  
+  @@map("generated_reports")
+}
+
+// ==================== COLABORAÇÃO E LOCK ====================
+
+model DocumentLock {
+  id          String    @id @default(cuid())
+  documentId  String    @unique
+  document    Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  
+  userId      String    // Usuário que fez o lock
+  lockedAt    DateTime  @default(now())
+  expiresAt   DateTime  // Expiração automática do lock
+  sessionId   String?   // Sessão que fez o lock
+  
+  @@index([documentId])
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("document_locks")
+}
+
+model DocumentInteraction {
+  id          String    @id @default(cuid())
+  documentId  String
+  document    Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  
+  userId      String
+  action      String    // view, edit, download, comment, approve, reject, sign
+  details     String?   // JSON com detalhes da interação
+  ipAddress   String?
+  userAgent   String?
+  
+  createdAt   DateTime  @default(now())
+  
+  @@index([documentId])
+  @@index([userId])
+  @@index([createdAt])
+  @@map("document_interactions")
+}
+
+// ==================== COMENTÁRIOS ====================
+
+model DocumentComment {
+  id          String    @id @default(cuid())
+  documentId  String
+  document    Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  
+  authorId    String
+  author      User      @relation(fields: [authorId], references: [id])
+  content     String    // Conteúdo do comentário (não editável após criação)
+  
+  // Para respostas
+  parentId    String?
+  parent      DocumentComment?  @relation("CommentReplies", fields: [parentId], references: [id])
+  replies     DocumentComment[] @relation("CommentReplies")
+  
+  // Metadados
+  resolved    Boolean   @default(false)
+  resolvedAt  DateTime?
+  resolvedBy  String?
+  
+  createdAt   DateTime  @default(now())
+  
+  @@index([documentId])
+  @@index([authorId])
+  @@index([createdAt])
+  @@map("document_comments")
+}
+
+// ==================== WORKFLOW DE APROVAÇÃO ====================
+
+enum WorkflowStatus {
+  DRAFT
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum StepType {
+  SEQUENTIAL   // Um por vez, em ordem
+  PARALLEL     // Todos ao mesmo tempo
+  ANY          // Qualquer um pode aprovar
+}
+
+model ApprovalWorkflow {
+  id            String    @id @default(cuid())
+  documentId    String
+  document      Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  
+  name          String    // Nome do workflow
+  description   String?
+  
+  // Configuração
+  type          StepType  @default(SEQUENTIAL)  // sequential, parallel, any
+  status        WorkflowStatus @default(DRAFT)
+  
+  // Controle
+  currentStep   Int       @default(0)    // Índice do passo atual
+  totalSteps    Int       @default(0)    // Total de passos
+  
+  // Datas
+  startedAt     DateTime?
+  completedAt   DateTime?
+  cancelledAt   DateTime?
+  
+  // Relacionamentos
+  steps         ApprovalStep[]
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  @@index([documentId])
+  @@index([status])
+  @@map("approval_workflows")
+}
+
+model ApprovalStep {
+  id            String    @id @default(cuid())
+  workflowId    String
+  workflow      ApprovalWorkflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  
+  // Identificação
+  stepNumber    Int       // Ordem do passo (1, 2, 3...)
+  name          String    // Nome do passo (ex: "Aprovação Gerente")
+  
+  // Atribuição
+  userId        String?   // Usuário específico (opcional)
+  roleId        String?   // Role que pode aprovar (ADMIN, MANAGER, etc.)
+  departmentId  String?   // Departamento que pode aprovar
+  
+  // Status
+  status        String    @default("pending") // pending, approved, rejected, skipped
+  approvedAt    DateTime?
+  rejectedAt    DateTime?
+  rejectedBy    String?
+  rejectionReason String?
+  
+  // Comentários
+  comments      String?
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  @@index([workflowId])
+  @@index([status])
+  @@map("approval_steps")
+}
+
+// ==================== BACKUP E RECUPERAÇÃO ====================
+
+model BackupRecord {
+  id            String    @id @default(cuid())
+  
+  // Identificação
+  filename      String    // Nome do arquivo de backup
+  filepath      String    // Caminho completo
+  fileSize      Int       // Tamanho em bytes
+  fileHash      String    // Hash SHA-256 para integridade
+  
+  // Tipo
+  type          String    @default("full") // full, incremental, differential
+  
+  // Status
+  status        String    @default("pending") // pending, completed, failed, restoring
+  startedAt     DateTime?
+  completedAt   DateTime?
+  duration      Int?      // Duração em segundos
+  
+  // Estatísticas
+  documentsCount Int?
+  usersCount    Int?
+  totalRecords  Int?
+  
+  // Restauração
+  restoredAt    DateTime?
+  restoredBy    String?
+  
+  // Configuração
+  createdBy     String?   // ID do usuário que criou (null = automático)
+  isAutomatic   Boolean   @default(true)
+  
+  // Metadados
+  error         String?   // Mensagem de erro se falhou
+  
+  createdAt     DateTime  @default(now())
+  
+  @@index([status])
+  @@index([type])
+  @@index([createdAt])
+  @@map("backup_records")
+}
+
+// ==================== TAREFAS AGENDADAS ====================
+
+enum TaskStatus {
+  SCHEDULED
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+model ScheduledTask {
+  id            String    @id @default(cuid())
+  
+  // Identificação
+  name          String    // Nome da tarefa
+  description   String?
+  
+  // Agendamento
+  cronExpression String? // Expressão cron (ex: "0 * * * *" = toda hora)
+  nextRunAt     DateTime?
+  lastRunAt     DateTime?
+  
+  // Configuração
+  taskType      String    // expiration_check, notification_send, cleanup_logs, backup
+  config        String?   // JSON com configurações específicas
+  
+  // Status
+  status        TaskStatus @default(SCHEDULED)
+  enabled       Boolean   @default(true)
+  
+  // Execução
+  runningSince  DateTime?
+  lastDuration  Int?      // Última duração em segundos
+  lastError     String?
+  runCount      Int       @default(0)
+  failCount     Int       @default(0)
+  
+  // Resultados
+  lastResult    String?   // JSON com resultado da última execução
+  
+  // Relacionamentos
+  executions    TaskExecution[]
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  @@index([status])
+  @@index([nextRunAt])
+  @@index([taskType])
+  @@map("scheduled_tasks")
+}
+
+model TaskExecution {
+  id            String    @id @default(cuid())
+  taskId        String
+  task          ScheduledTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  
+  // Execução
+  startedAt     DateTime  @default(now())
+  completedAt   DateTime?
+  duration      Int?      // Duração em segundos
+  
+  // Status
+  status        String    @default("running") // running, completed, failed
+  error         String?
+  
+  // Resultado
+  result        String?   // JSON com resultado detalhado
+  
+  @@index([taskId])
+  @@index([startedAt])
+  @@map("task_executions")
+}
+
+// ==================== API KEYS PARA INTEGRAÇÃO ====================
+
+model ApiKey {
+  id            String    @id @default(cuid())
+  
+  // Identificação
+  name          String    // Nome descritivo
+  key           String    @unique  // API Key (hash)
+  keyPrefix     String    // Prefixo para identificação (ex: "sk_live_...")
+  
+  // Proprietário
+  userId        String    // Usuário que criou
+  user          User      @relation(fields: [userId], references: [id])
+  nameHash      String?   // Hash do nome para validação
+  
+  // Permissões
+  permissions   String    // JSON com lista de permissões
+  rateLimit     Int       @default(1000)  // Requisições por hora
+  
+  // Status
+  active        Boolean   @default(true)
+  lastUsedAt    DateTime?
+  usageCount    Int       @default(0)
+  
+  // Validade
+  expiresAt     DateTime?
+  
+  // Metadados
+  description   String?
+  allowedIps    String?   // JSON com lista de IPs permitidos
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  @@index([key])
+  @@index([userId])
+  @@index([active])
+  @@map("api_keys")
+}
+
+model ApiRequestLog {
+  id            String    @id @default(cuid())
+  
+  // Identificação
+  apiKeyId      String?
+  endpoint      String
+  method        String
+  
+  // Requisição
+  ip            String?
+  userAgent     String?
+  requestBody   String?   // JSON (sanitizado)
+  
+  // Resposta
+  statusCode    Int
+  responseTime  Int       // milissegundos
+  
+  // Erro
+  error         String?
+  
+  createdAt     DateTime  @default(now())
+  
+  @@index([apiKeyId])
+  @@index([endpoint])
+  @@index([createdAt])
+  @@map("api_request_logs")
+}
