@@ -1,0 +1,78 @@
+# Dependencies
+node_modules
+.pnp
+.pnp.js
+
+# Testing
+coverage
+*.test.ts
+*.test.tsx
+*.spec.ts
+*.spec.tsx
+
+# Next.js
+.next
+out
+
+# Production
+build
+dist
+
+# Misc
+.DS_Store
+*.pem
+.idea
+.vscode
+*.log
+*.pid
+*.seed
+*.pid.lock
+
+# Debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Local env files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Vercel
+.vercel
+
+# Turbopack cache
+.turbo
+
+# Database (will be created in container)
+*.db
+*.db-journal
+prisma/dev.db
+prisma/prod.db
+
+# Uploads (will be mounted as volume)
+uploads/
+public/uploads/
+
+# Backups
+backups/
+
+# Development files
+dev.log
+*.md
+!README.md
+
+# Docker files (not needed inside container)
+Dockerfile
+docker-compose*.yml
+.dockerignore
+nginx.conf
+
+# Git
+.git
+.gitignore
+
+# SSL certificates
+ssl/
