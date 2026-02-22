@@ -1,0 +1,81 @@
+# Sigma DOCs - Docker Compose for Production
+# Version: 3.0
+
+services:
+  # Main Application
+  sigmadocs:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sigmadocs-app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=file:/app/data/sigmadocs.db
+      - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-sigmadocs-secret-key-change-in-production}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASS=${SMTP_PASS:-}
+      - SMTP_FROM_EMAIL=${SMTP_FROM_EMAIL:-noreply@sigmadocs.com.br}
+      - SMTP_FROM_NAME=${SMTP_FROM_NAME:-Sigma DOCs}
+      - CRON_SECRET=${CRON_SECRET:-your-cron-secret}
+    volumes:
+      # Persist database
+      - sigmadocs-data:/app/data
+      # Persist uploaded files
+      - sigmadocs-uploads:/app/uploads
+      # Persist backups
+      - sigmadocs-backups:/app/backups
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - sigmadocs-network
+
+  # Nginx Reverse Proxy (Optional - for SSL and domain)
+  nginx:
+    image: nginx:alpine
+    container_name: sigmadocs-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      sigmadocs:
+        condition: service_healthy
+    networks:
+      - sigmadocs-network
+
+  # Redis for caching (Optional - for high traffic)
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: sigmadocs-redis
+  #   restart: unless-stopped
+  #   volumes:
+  #     - sigmadocs-redis:/data
+  #   networks:
+  #     - sigmadocs-network
+
+volumes:
+  sigmadocs-data:
+    driver: local
+  sigmadocs-uploads:
+    driver: local
+  sigmadocs-backups:
+    driver: local
+  # sigmadocs-redis:
+  #   driver: local
+
+networks:
+  sigmadocs-network:
+    driver: bridge
