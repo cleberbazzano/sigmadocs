@@ -92,16 +92,15 @@ export function LoginScreen() {
         {/* Content */}
         <div className="relative z-10 text-center max-w-lg">
           {/* Logo */}
-          <div className="mb-8 flex justify-center">
-            <div className="relative w-32 h-32 lg:w-40 lg:h-40">
-              <Image 
-                src={config.companyLogo || config.logoUrlDark} 
-                alt="Sigma DOCs"
-                fill
-                className="object-contain drop-shadow-2xl"
-                priority
-              />
-            </div>
+          <div className="mb-6 flex justify-center">
+            <Image 
+              src="/logo-sigma.png" 
+              alt="Sigma DOCs"
+              width={180}
+              height={180}
+              className="drop-shadow-2xl"
+              priority
+            />
           </div>
           
           {/* System Name */}
